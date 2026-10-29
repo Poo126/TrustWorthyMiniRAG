@@ -137,6 +137,13 @@ def embed_texts(texts: list[str]) -> list[list[float]]:
     return [d.embedding for d in resp.data]
 
 
+def _chunk_embedding_text(chunk: dict[str, Any]) -> str:
+    """Include metadata headings in the searchable embedding text."""
+    title = chunk.get("title", "")
+    section = chunk.get("section", "")
+    return f"{title} — {section}\n{chunk['text']}"
+
+
 def setup_collection() -> None:
     if qdrant.collection_exists(collection_name=COLLECTION_NAME):
         qdrant.delete_collection(collection_name=COLLECTION_NAME)
@@ -147,7 +154,7 @@ def setup_collection() -> None:
 
 
 def ingest_chunks(chunks: list[dict[str, Any]]) -> None:
-    vectors = embed_texts([c["text"] for c in chunks])
+    vectors = embed_texts([_chunk_embedding_text(c) for c in chunks])
     points = [PointStruct(id=str(uuid.uuid4()), vector=v, payload=c)
               for c, v in zip(chunks, vectors)]
     qdrant.upsert(collection_name=COLLECTION_NAME, points=points)
@@ -209,9 +216,12 @@ def should_abstain(chunks: list[dict[str, Any]], threshold: float = RETRIEVAL_TH
 
 SYSTEM_PROMPT = """You answer questions about a small collection of Sherlock Holmes stories.
 Use ONLY the numbered excerpts provided below. After each claim, cite the excerpt it
-came from using its number in square brackets, e.g. [1]. If the excerpts do not contain
-the answer, reply with exactly: "I don't know based on the provided documents." Do not
-use any outside knowledge."""
+came from using its number in square brackets, e.g. [1]. Section headings are included
+as metadata: if asked what a heading means, explain the event or outcome described in
+the matching excerpt rather than treating the heading as an unanswered phrase. You may
+make a clear, directly supported inference from the excerpts and identify it as such.
+If the excerpts do not contain enough evidence to answer, reply with exactly: "I don't
+know based on the provided documents." Do not use any outside knowledge."""
 
 
 def answer(question: str, k: int = 5, threshold: float = RETRIEVAL_THRESHOLD) -> dict[str, Any]:
